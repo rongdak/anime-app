@@ -4,6 +4,7 @@ import numpy as np
 import cv2
 from PIL import Image
 import os
+import io  # <--- 把它移到这里就没问题了
 
 st.set_page_config(page_title="二次元转换器", page_icon="🎨")
 
@@ -15,8 +16,7 @@ def process_image(image):
     """
     image = np.array(image.convert('RGB'))
     
-    # --- 核心修改：不再计算比例，直接强制 Resize 到 512x512 ---
-    # 这样做虽然可能让图片稍微压扁一点，但能保证模型绝对不报错
+    # 强制 Resize 到 512x512 (防止模型报错)
     image = cv2.resize(image, (512, 512))
     
     image = image.astype(np.float32)
@@ -77,7 +77,7 @@ if uploaded_file:
                 if anime_image:
                     st.image(anime_image, caption="生成结果", use_column_width=True)
                     
-                    # 增加下载按钮
+                    # 下载按钮
                     buf = io.BytesIO()
                     anime_image.save(buf, format="PNG")
                     st.download_button(
@@ -88,5 +88,3 @@ if uploaded_file:
                     )
             except Exception as e:
                 st.error(f"出错: {e}")
-# 补充缺失的io库
-import io
