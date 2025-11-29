@@ -1,45 +1,16 @@
 import streamlit as st
-import os
-import requests
 import onnxruntime as ort
 import numpy as np
 import cv2
 from PIL import Image
-import io
+import os
 
 st.set_page_config(page_title="二次元转换器", page_icon="🎨")
 
-# 强制使用新文件名，避免读取到旧的损坏文件
-MODEL_URL = "https://github.com/bryandlee/animegan2-pytorch/raw/main/weights/2_4_paprika.onnx"
-MODEL_FILE = "anime_model_v2.onnx"
-
-def download_model():
-    # 检查模型是否存在
-    if not os.path.exists(MODEL_FILE):
-        st.info("🚀 正在下载 AI 模型 (约8MB)，请耐心等待...")
-        try:
-            # 伪装浏览器头信息
-            headers = {'User-Agent': 'Mozilla/5.0'}
-            r = requests.get(MODEL_URL, headers=headers, stream=True)
-            
-            with open(MODEL_FILE, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=1024):
-                    if chunk:
-                        f.write(chunk)
-            
-            # 校验文件大小，防止下载空文件
-            if os.path.getsize(MODEL_FILE) < 1000000:
-                os.remove(MODEL_FILE)
-                st.error("❌ 下载失败：文件过小，请刷新页面重试")
-                st.stop()
-                
-            st.success("✅ 模型下载成功！")
-        except Exception as e:
-            st.error(f"❌ 下载出错: {e}")
-            st.stop()
+# 直接使用你刚上传的文件名
+MODEL_FILE = "2_4_paprika.onnx"
 
 def process_image(image, size=512):
-    # 图片预处理
     image = np.array(image.convert('RGB'))
     image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
     h, w = image.shape[:2]
@@ -58,14 +29,15 @@ def process_image(image, size=512):
     return image
 
 def run_inference(image_pil):
-    download_model()
-    
+    # 检查模型文件是否存在
+    if not os.path.exists(MODEL_FILE):
+        st.error(f"❌ 找不到模型文件！请确认你已经把 {MODEL_FILE} 上传到了 GitHub 仓库里。")
+        st.stop()
+
     try:
         session = ort.InferenceSession(MODEL_FILE)
     except Exception as e:
-        if os.path.exists(MODEL_FILE):
-            os.remove(MODEL_FILE)
-        st.error(f"模型加载失败，已自动清理坏文件。请刷新页面重试！\n错误: {e}")
+        st.error(f"❌ 模型加载出错: {e}")
         st.stop()
 
     x_name = session.get_inputs()[0].name
@@ -93,7 +65,7 @@ if uploaded_file:
     st.image(original_image, caption="原图", use_column_width=True)
     
     if st.button("⚡ 开始转换", type="primary"):
-        with st.spinner("正在生成中..."):
+        with st.spinner("AI 正在绘制中..."):
             anime_image = run_inference(original_image)
             if anime_image:
                 st.image(anime_image, caption="动漫效果", use_column_width=True)
