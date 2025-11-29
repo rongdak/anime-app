@@ -6,9 +6,13 @@ from PIL import Image
 import os
 import io
 
-st.set_page_config(page_title="新海诚风格转换", page_icon="🌤️")
+st.set_page_config(page_title="二次元风格转换", page_icon="🎨", layout="wide")
 
-MODEL_FILE = "Shinkai_53.onnx"
+# --- 1. 这里对应你截图里的两个文件名 ---
+STYLES = {
+    "宫崎骏风 (Hayao) - 线条清晰": "hayao.onnx",
+    "新海诚风 (Shinkai) - 风景唯美": "shinkai.onnx"
+}
 
 def resize_crop_center(image, target_size=512):
     """中心裁剪，保证不变形"""
@@ -20,78 +24,102 @@ def resize_crop_center(image, target_size=512):
     resized_img = cv2.resize(cropped_img, (target_size, target_size))
     return resized_img
 
-def process_image(image):
+def process_image(image, style_name):
     image = np.array(image.convert('RGB'))
     image = resize_crop_center(image)
-    
     image = image.astype(np.float32)
     
-    # --- 修复点 1：归一化 ---
+    # 统一归一化
     image = image / 127.5 - 1.0
     
-    # --- 修复点 2：不要 transpose (保持 HWC 格式) ---
-    # 删掉了 image = image.transpose(2, 0, 1)
-    
-    # 增加 batch 维度: (1, 512, 512, 3)
+    # --- 关键逻辑：根据文件名判断处理方式 ---
+    if "shinkai" in style_name:
+        # 新海诚 (Shinkai) 保持 HWC，不动
+        pass
+    else:
+        # 宫崎骏 (Hayao) 需要变为 CHW
+        image = image.transpose(2, 0, 1)
+        
     image = np.expand_dims(image, axis=0)
     return image
 
-def run_inference(image_pil):
-    if not os.path.exists(MODEL_FILE):
-        st.error(f"❌ 找不到模型文件 {MODEL_FILE}")
-        st.stop()
+def post_process(output, style_name):
+    output = output.squeeze()
+    
+    # --- 关键逻辑：还原 ---
+    if "shinkai" in style_name:
+        pass
+    else:
+        # 宫崎骏 需要变回 HWC
+        output = output.transpose(1, 2, 0)
+        
+    # 反归一化
+    output = (output + 1.0) * 127.5
+    output = np.clip(output, 0, 255).astype(np.uint8)
+    return Image.fromarray(output)
+
+def run_inference(image_pil, model_filename):
+    if not os.path.exists(model_filename):
+        st.error(f"❌ 找不到模型文件: {model_filename}")
+        st.warning("请检查 GitHub 仓库里是否上传了该文件，名字必须完全一样！")
+        return None
 
     try:
         sess_options = ort.SessionOptions()
         sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
-        session = ort.InferenceSession(MODEL_FILE, sess_options)
+        session = ort.InferenceSession(model_filename, sess_options)
     except Exception as e:
-        st.error(f"❌ 模型加载出错: {e}")
-        st.stop()
+        st.error(f"❌ 模型加载失败: {e}")
+        return None
 
     x_name = session.get_inputs()[0].name
     y_name = session.get_outputs()[0].name
     
-    img_input = process_image(image_pil)
+    img_input = process_image(image_pil, model_filename)
     
     # 推理
     fake_img = session.run([y_name], {x_name: img_input})[0]
     
     # 后处理
-    fake_img = fake_img.squeeze() # 去掉 batch 维度
-    
-    # --- 修复点 3：输出也是 HWC，不需要转回 ---
-    # 删掉了 fake_img = fake_img.transpose(1, 2, 0)
-    
-    fake_img = (fake_img + 1.0) * 127.5
-    fake_img = np.clip(fake_img, 0, 255).astype(np.uint8)
-    
-    return Image.fromarray(fake_img)
+    result_img = post_process(fake_img, model_filename)
+    return result_img
 
-# --- 主页面 ---
-st.title("🌤️ AI 动漫绘图 (新海诚版)")
-st.info("💡 唯美光影风格，中心裁剪模式。")
+# --- 页面 UI ---
+st.title("🎨 AI 动漫双风格生成器")
+st.markdown("### 上传照片，在 宫崎骏 和 新海诚 之间切换！")
 
-uploaded_file = st.file_uploader("请上传照片", type=['jpg', 'png', 'jpeg'])
+# 侧边栏
+with st.sidebar:
+    st.header("🎨 风格选择")
+    selected_style = st.radio("请选择画风:", list(STYLES.keys()))
+    current_model = STYLES[selected_style]
+    st.info(f"当前加载: {current_model}")
+
+# 主区域
+uploaded_file = st.file_uploader("请上传图片", type=['jpg', 'png', 'jpeg'])
 
 if uploaded_file:
     original_image = Image.open(uploaded_file)
-    st.image(original_image, caption="原图", use_column_width=True)
     
-    if st.button("⚡ 立即转换", type="primary"):
-        with st.spinner("正在绘制..."):
-            try:
-                anime_image = run_inference(original_image)
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("原图")
+        st.image(original_image, use_column_width=True)
+
+    with col2:
+        st.subheader("生成结果")
+        if st.button("✨ 立即生成", type="primary"):
+            with st.spinner(f"正在绘制 {selected_style.split(' - ')[0]} 风格..."):
+                anime_image = run_inference(original_image, current_model)
+                
                 if anime_image:
-                    st.image(anime_image, caption="新海诚效果", use_column_width=True)
+                    st.image(anime_image, use_column_width=True)
                     
                     buf = io.BytesIO()
                     anime_image.save(buf, format="PNG")
                     st.download_button(
-                        label="📥 保存图片",
+                        label="📥 保存高清大图",
                         data=buf.getvalue(),
-                        file_name="shinkai_style.png",
+                        file_name=f"anime_{current_model.split('.')[0]}.png",
                         mime="image/png"
                     )
-            except Exception as e:
-                st.error(f"出错: {e}")
